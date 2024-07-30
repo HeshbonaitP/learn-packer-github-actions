@@ -115,15 +115,6 @@ INSTANCE_PROFILE=$(aws ec2 describe-instances --instance-ids $NEW_INSTANCE_ID --
 echo "Instance profile: $INSTANCE_PROFILE"
 
 
-
-
-echo "Checking contents of $APP_DIR in the new instance:"
-aws ssm send-command \
-  --instance-ids $NEW_INSTANCE_ID \
-  --document-name "AWS-RunShellScript" \
-  --parameters '{"commands":["ls -l '$APP_DIR'"]}' \
-  --output text --query "CommandInvocations[0].CommandPlugins[0].Output"
-
 echo "Checking if JAR file exists:"
 if [ -z "$JAR_FILE" ]; then
   echo "Error: JAR file not found in $APP_DIR"

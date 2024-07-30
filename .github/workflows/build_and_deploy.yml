@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       run_update_asg_only:
-        description: 'Run only the update ASG process'
+        description: 'Run only the update ASG process2'
         required: true
         default: false
         type: boolean

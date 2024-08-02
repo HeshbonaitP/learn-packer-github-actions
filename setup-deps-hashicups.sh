@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -e
-echo "Starting Packer setup script..."
+echo "Starting Packer setup script....."
 
 JAR_PATH="/tmp/app.jar"
 

@@ -32,7 +32,7 @@ env:
   DEFAULT_AMI_OWNER: "659248058490"
   AMI_ID: ami-02bd14a7de0ef4613
   JAVA_VERSION: '17'
-  BACKEND_REPO: 'dvirmoyal/Backend'
+  BACKEND_REPO: 'HeshbonaitP/Backend'
   LAUNCH_TEMPLATE_NAME: templete-dev-backend
 
 jobs:

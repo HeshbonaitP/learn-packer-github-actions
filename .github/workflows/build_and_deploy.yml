@@ -74,21 +74,17 @@ jobs:
           name: compiled-backend
           path: target/*.jar
 
-  build-artifact:
-    name: Build AMI
-    needs: compile-backend
-    runs-on: ubuntu-latest
-    outputs:
-           version_fingerprint: ${{ steps.hcp.outputs.version_fingerprint }}
-           ami_id: ${{ steps.ami.outputs.ami_id }}
-    if: github.event.inputs.run_update_asg_only != 'true' && github.event.inputs.use_default_ami != 'true'
-    steps:
-    - name: Checkout Backend Repository
-      uses: actions/checkout@v4
-      with:
-        repository: ${{ env.BACKEND_REPO }}
-        ref: ${{ github.event.inputs.branch_name || 'main' }}
-        token: ${{ secrets.REPO_ACCESS_TOKEN }}
+build-artifact:
+  name: Build AMI
+  needs: compile-backend
+  runs-on: ubuntu-latest
+  outputs:
+        version_fingerprint: ${{ steps.hcp.outputs.version_fingerprint }}
+        ami_id: ${{ steps.ami.outputs.ami_id }}
+  if: github.event.inputs.run_update_asg_only != 'true' && github.event.inputs.use_default_ami != 'true'
+  steps:
+  - name: Checkout Repository
+    uses: actions/checkout@v4
 
       
     - name: Configure AWS Credentials

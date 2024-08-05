@@ -5,6 +5,14 @@ on:
     branches: ["development", "staging", "main"]
   workflow_dispatch:
     inputs:
+      branch_name:
+        description: 'Branch to checkout (main or develop)'
+        required: true
+        default: 'main'
+        type: choice
+        options:
+        - main
+        - develop
       run_update_asg_only:
         description: 'Run only the update ASG process3'
         required: true
@@ -19,7 +27,6 @@ on:
         required: true
         default: false
         type: boolean
-
 env:
   HCP_CLIENT_ID: ${{ secrets.HCP_CLIENT_ID }}
   HCP_CLIENT_SECRET: ${{ secrets.HCP_CLIENT_SECRET }}
@@ -45,6 +52,7 @@ jobs:
         with:
           repository: ${{ env.BACKEND_REPO }}
           token: ${{ secrets.REPO_ACCESS_TOKEN }}
+          ref: ${{ github.event.inputs.branch_name || 'main' }}
       
       - name: Set up JDK and Maven
         uses: actions/setup-java@v3
@@ -69,17 +77,19 @@ jobs:
           name: compiled-backend
           path: target/*.jar
 
-  build-artifact:
-    name: Build AMI
-    needs: compile-backend
-    runs-on: ubuntu-latest
-    outputs:
-      version_fingerprint: ${{ steps.hcp.outputs.version_fingerprint }}
-      ami_id: ${{ steps.ami.outputs.ami_id }}
-    if: github.event.inputs.run_update_asg_only != 'true' && github.event.inputs.use_default_ami != 'true'
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+        build-artifact:
+  name: Build AMI
+  needs: compile-backend
+  runs-on: ubuntu-latest
+  outputs:
+    version_fingerprint: ${{ steps.hcp.outputs.version_fingerprint }}
+    ami_id: ${{ steps.ami.outputs.ami_id }}
+  if: github.event.inputs.run_update_asg_only != 'true' && github.event.inputs.use_default_ami != 'true'
+  steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.inputs.branch_name || github.ref }}
       
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4

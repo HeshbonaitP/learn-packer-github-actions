@@ -6,6 +6,7 @@ set -e
 AMI_ID=$1
 FRONTEND_ASG_NAME=$2
 LAUNCH_TEMPLATE_NAME=$3
+RDS_INSTANCE_IDENTIFIER="heshbonaitpdev"
 
 # Define variables for the Java application
 APP_DIR="/tmp"    # Updated to the correct directory
@@ -114,37 +115,29 @@ echo "Checking IAM instance profile..."
 INSTANCE_PROFILE=$(aws ec2 describe-instances --instance-ids $NEW_INSTANCE_ID --query 'Reservations[0].Instances[0].IamInstanceProfile.Arn' --output text)
 echo "Instance profile: $INSTANCE_PROFILE"
 
+echo "Setting up automatic connection between EC2 and RDS..."
 
-echo "Checking if JAR file exists:"
-if [ -z "$JAR_FILE" ]; then
-  echo "Error: JAR file not found in $APP_DIR"
+# Set up the connection between EC2 and RDS
+CONNECTION_RESULT=$(aws rds modify-db-instance \
+  --db-instance-identifier $RDS_INSTANCE_IDENTIFIER \
+  --aws-cli-connect-resources $NEW_INSTANCE_ID \
+  --apply-immediately)
+
+CONNECTION_STATUS=$(echo $CONNECTION_RESULT | jq -r '.DBInstance.DBInstanceStatus')
+
+if [ "$CONNECTION_STATUS" = "available" ] || [ "$CONNECTION_STATUS" = "modifying" ]; then
+  echo "Connection setup initiated successfully. RDS status: $CONNECTION_STATUS"
 else
-  echo "JAR file found: $JAR_FILE"
+  echo "Error setting up connection. RDS status: $CONNECTION_STATUS"
+  exit 1
 fi
 
-echo "Waiting for ALB to report the target as healthy..."
-TARGET_GROUP_ARN=$(aws autoscaling describe-auto-scaling-groups \
-  --auto-scaling-group-names $FRONTEND_ASG_NAME \
-  --query 'AutoScalingGroups[0].TargetGroupARNs[0]' \
-  --output text)
+echo "Waiting for RDS modification to complete..."
+aws rds wait db-instance-available --db-instance-identifier $RDS_INSTANCE_IDENTIFIER
 
-while true; do
-  TARGET_HEALTH=$(aws elbv2 describe-target-health \
-    --target-group-arn $TARGET_GROUP_ARN \
-    --targets Id=$NEW_INSTANCE_ID \
-    --query 'TargetHealthDescriptions[0].TargetHealth.State' \
-    --output text)
-  
-  if [ "$TARGET_HEALTH" = "healthy" ]; then
-    echo "New instance is healthy in ALB!"
-    break
-  elif [ "$TARGET_HEALTH" = "unhealthy" ]; then
-    echo "New instance is unhealthy in ALB. Please check the application manually."
-    exit 1
-  else
-    echo "Target health is $TARGET_HEALTH. Waiting..."
-    sleep 30
-  fi
-done
+echo "RDS-EC2 connection setup completed successfully!"
+
+echo "ASG update process completed successfully!"
+
 
 echo "ASG update process completed successfully!"

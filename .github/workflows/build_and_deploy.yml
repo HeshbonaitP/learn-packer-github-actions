@@ -32,13 +32,13 @@ env:
   HCP_BUCKET_NAME: "learn-packer-github-actions"
   SSH_PACKER: ${{ secrets.SSH_PACKER }}
   SSH_PACKER_PUB: ${{ secrets.SSH_PACKER_PUB }}
-  DEFAULT_AMI_NAME: "al2023-ami-2023.4.20240528.0-kernel-6.1-x86_64"
+  DEFAULT_AMI_NAME: "al2023-ami-2023.5.20240805.0-kernel-6.1-x86_64"
   DEFAULT_AMI_OWNER: "659248058490"
-  AMI_ID: ami-02bd14a7de0ef4613
+  AMI_ID: ami-0472f52fca1703301
   JAVA_VERSION: '17'
   BACKEND_REPO: 'HeshbonaitP/Backend'
-  LAUNCH_TEMPLATE_NAME: templete-dev-backend
-
+  LAUNCH_TEMPLATE_NAME: templet-for-dev-backend
+  
 jobs:
   compile-backend:
     name: Compile Backend
@@ -200,8 +200,8 @@ jobs:
       
       - name: Update and Refresh ASG
         env:
-          FRONTEND_ASG_NAME: AUTO-SCALING-DEV-BACKEND
-          LAUNCH_TEMPLATE_NAME: templete-dev-backend
+          FRONTEND_ASG_NAME: ASG-DEV-BACKEND
+          LAUNCH_TEMPLATE_NAME: templet-for-dev-backend
           NEW_AMI_ID: ${{ needs.build-artifact.outputs.ami_id }}
         run: |
           echo "NEW_AMI_ID: $NEW_AMI_ID"

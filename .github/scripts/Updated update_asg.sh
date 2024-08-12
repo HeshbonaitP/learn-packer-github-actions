@@ -114,37 +114,21 @@ echo "Checking IAM instance profile..."
 INSTANCE_PROFILE=$(aws ec2 describe-instances --instance-ids $NEW_INSTANCE_ID --query 'Reservations[0].Instances[0].IamInstanceProfile.Arn' --output text)
 echo "Instance profile: $INSTANCE_PROFILE"
 
+echo "Waiting for instance to be fully initialized..."
+sleep 300  # Wait for 5 minutes
 
-echo "Checking if JAR file exists:"
-if [ -z "$JAR_FILE" ]; then
-  echo "Error: JAR file not found in $APP_DIR"
-else
-  echo "JAR file found: $JAR_FILE"
-fi
+# Prompt for manual steps
+echo "AMIT Instance initialization complete. Please perform the following manual steps:"
+echo "AMIT 1. Connect to the database manually"
+echo "AMIT 2. Start the application"
+echo "AMIT 3. Verify that the application is running correctly"
+echo "AMIT 4. Perform any additional health checks as needed"
 
-echo "Waiting for ALB to report the target as healthy..."
-TARGET_GROUP_ARN=$(aws autoscaling describe-auto-scaling-groups \
-  --auto-scaling-group-names $FRONTEND_ASG_NAME \
-  --query 'AutoScalingGroups[0].TargetGroupARNs[0]' \
-  --output text)
+# Wait for user confirmation
+read -p "AMIT Press Enter when you have completed these steps and the application is healthy..."
 
-while true; do
-  TARGET_HEALTH=$(aws elbv2 describe-target-health \
-    --target-group-arn $TARGET_GROUP_ARN \
-    --targets Id=$NEW_INSTANCE_ID \
-    --query 'TargetHealthDescriptions[0].TargetHealth.State' \
-    --output text)
-  
-  if [ "$TARGET_HEALTH" = "healthy" ]; then
-    echo "New instance is healthy in ALB!"
-    break
-  elif [ "$TARGET_HEALTH" = "unhealthy" ]; then
-    echo "New instance is unhealthy in ALB. Please check the application manually."
-    exit 1
-  else
-    echo "Target health is $TARGET_HEALTH. Waiting..."
-    sleep 30
-  fi
-done
+echo "AMIT Manual verification completed. Proceeding with the rest of the process."
+
+# Remove any ALB health check related code here
 
 echo "ASG update process completed successfully!"

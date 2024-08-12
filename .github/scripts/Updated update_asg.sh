@@ -1,6 +1,4 @@
 #!/bin/bash
-# Set execute permissions for the script
-chmod +x "$0"
 set -e
 
 AMI_ID=$1
@@ -8,41 +6,29 @@ FRONTEND_ASG_NAME=$2
 LAUNCH_TEMPLATE_NAME=$3
 RDS_INSTANCE_IDENTIFIER="heshbonaitpdev"
 
-# Define variables for the Java application
-APP_DIR="/tmp"    # Updated to the correct directory
-JAR_FILE=$(find $APP_DIR -name "*.jar" | head -n 1) # Assumes the JAR file is in the app directory
-JAVA_VERSION="17"
-JAVA_OPTS="-Xmx512m -Dspring.profiles.active=production -Dspring.jpa.hibernate.ddl-auto=none -Dspring.jpa.properties.hibernate.temp.use_jdbc_metadata_defaults=false"
-
 echo "Starting ASG update process with AMI ID: $AMI_ID"
 
-echo "Checking contents of $APP_DIR:"
-if [ -d "$APP_DIR" ]; then
-    ls -l $APP_DIR
-else
-    echo "$APP_DIR does not exist"
-fi
+# Function to check if instance is running and has passed status checks
+check_instance_health() {
+    local instance_id=$1
+    local max_attempts=20
+    local attempt=1
 
-echo "Checking for JAR files:"
-find $APP_DIR -name "*.jar" || echo "No JAR files found in $APP_DIR"
+    while [ $attempt -le $max_attempts ]; do
+        status=$(aws ec2 describe-instance-status --instance-ids $instance_id --query 'InstanceStatuses[0].InstanceStatus.Status' --output text)
+        if [ "$status" = "ok" ]; then
+            echo "Instance $instance_id is healthy."
+            return 0
+        fi
+        echo "Attempt $attempt: Instance not yet healthy. Waiting..."
+        sleep 30
+        ((attempt++))
+    done
+    echo "Instance did not become healthy within the expected time."
+    return 1
+}
 
-echo "Checking permissions:"
-ls -ld $APP_DIR  
-
-# Check if Launch Template exists
-if ! aws ec2 describe-launch-templates --launch-template-names "$LAUNCH_TEMPLATE_NAME" > /dev/null 2>&1; then
-    echo "Error: Launch Template $LAUNCH_TEMPLATE_NAME does not exist."
-    echo "Please create the Launch Template manually with the required settings before running this script."
-    exit 1
-else
-    echo "Launch Template $LAUNCH_TEMPLATE_NAME exists. Proceeding with update."
-fi
-
-echo "Temporarily increasing Max Capacity to 2"
-aws autoscaling update-auto-scaling-group \
-  --auto-scaling-group-name $FRONTEND_ASG_NAME \
-  --max-size 2
-
+# Update Launch Template
 echo "Creating new Launch Template version"
 LATEST_LAUNCH_TEMPLATE=$(aws ec2 describe-launch-template-versions \
   --launch-template-name "$LAUNCH_TEMPLATE_NAME" \
@@ -50,7 +36,6 @@ LATEST_LAUNCH_TEMPLATE=$(aws ec2 describe-launch-template-versions \
   --query 'LaunchTemplateVersions[0].LaunchTemplateData' \
   --output json)
 
-# Update only the AMI ID in the new version
 NEW_LAUNCH_TEMPLATE_DATA=$(echo $LATEST_LAUNCH_TEMPLATE | jq --arg AMI_ID "$AMI_ID" '.ImageId = $AMI_ID')
 
 NEW_LAUNCH_TEMPLATE_VERSION=$(aws ec2 create-launch-template-version \
@@ -65,14 +50,17 @@ aws autoscaling update-auto-scaling-group \
   --launch-template LaunchTemplateName=$LAUNCH_TEMPLATE_NAME,Version=$NEW_LAUNCH_TEMPLATE_VERSION
 
 echo "Starting instance refresh"
-aws autoscaling start-instance-refresh \
+REFRESH_ID=$(aws autoscaling start-instance-refresh \
   --auto-scaling-group-name $FRONTEND_ASG_NAME \
-  --preferences '{"MinHealthyPercentage": 100}'
+  --preferences '{"MinHealthyPercentage": 100}' \
+  --query 'InstanceRefreshId' \
+  --output text)
 
 echo "Waiting for instance refresh to complete..."
 while true; do
   REFRESH_STATUS=$(aws autoscaling describe-instance-refreshes \
     --auto-scaling-group-name $FRONTEND_ASG_NAME \
+    --instance-refresh-ids $REFRESH_ID \
     --query 'InstanceRefreshes[0].Status' \
     --output text)
   
@@ -99,50 +87,13 @@ NEW_INSTANCE_ID=$(aws autoscaling describe-auto-scaling-groups \
 
 echo "New instance ID: $NEW_INSTANCE_ID"
 
-echo "Waiting for instance to be fully initialized..."
-sleep 300  # Wait for 5 minutes
-
-echo "Checking instance state..."
-INSTANCE_STATE=$(aws ec2 describe-instances --instance-ids $NEW_INSTANCE_ID --query 'Reservations[0].Instances[0].State.Name' --output text)
-echo "Instance state: $INSTANCE_STATE"
-
-if [ "$INSTANCE_STATE" != "running" ]; then
-  echo "Error: Instance is not in 'running' state"
-  exit 1
+# Check if the new instance is healthy
+if ! check_instance_health $NEW_INSTANCE_ID; then
+    echo "New instance did not pass health checks. Exiting."
+    exit 1
 fi
 
-echo "Checking IAM instance profile..."
-INSTANCE_PROFILE=$(aws ec2 describe-instances --instance-ids $NEW_INSTANCE_ID --query 'Reservations[0].Instances[0].IamInstanceProfile.Arn' --output text)
-echo "Instance profile: $INSTANCE_PROFILE"
-
-echo "Waiting for ALB to report the target as healthy..."
-TARGET_GROUP_ARN=$(aws autoscaling describe-auto-scaling-groups \
-  --auto-scaling-group-names $FRONTEND_ASG_NAME \
-  --query 'AutoScalingGroups[0].TargetGroupARNs[0]' \
-  --output text)
-
-while true; do
-  TARGET_HEALTH=$(aws elbv2 describe-target-health \
-    --target-group-arn $TARGET_GROUP_ARN \
-    --targets Id=$NEW_INSTANCE_ID \
-    --query 'TargetHealthDescriptions[0].TargetHealth.State' \
-    --output text)
-  
-  if [ "$TARGET_HEALTH" = "healthy" ]; then
-    echo "New instance is healthy in ALB!"
-    break
-  elif [ "$TARGET_HEALTH" = "unhealthy" ]; then
-    echo "New instance is unhealthy in ALB. Please check the application manually."
-    exit 1
-  else
-    echo "Target health is $TARGET_HEALTH. Waiting..."
-    sleep 30
-  fi
-done
-
 echo "Setting up automatic connection between EC2 and RDS..."
-
-# Set up the connection between EC2 and RDS
 CONNECTION_RESULT=$(aws rds modify-db-instance \
   --db-instance-identifier $RDS_INSTANCE_IDENTIFIER \
   --aws-cli-connect-resources $NEW_INSTANCE_ID \
@@ -162,7 +113,39 @@ aws rds wait db-instance-available --db-instance-identifier $RDS_INSTANCE_IDENTI
 
 echo "RDS-EC2 connection setup completed successfully!"
 
-echo "ASG update process completed successfully!"
+# Wait for the application to start
+echo "Waiting for application to start and connect to the database..."
+sleep 120
 
+echo "Checking ALB target health..."
+TARGET_GROUP_ARN=$(aws autoscaling describe-auto-scaling-groups \
+  --auto-scaling-group-names $FRONTEND_ASG_NAME \
+  --query 'AutoScalingGroups[0].TargetGroupARNs[0]' \
+  --output text)
+
+max_attempts=20
+attempt=1
+while [ $attempt -le $max_attempts ]; do
+  TARGET_HEALTH=$(aws elbv2 describe-target-health \
+    --target-group-arn $TARGET_GROUP_ARN \
+    --targets Id=$NEW_INSTANCE_ID \
+    --query 'TargetHealthDescriptions[0].TargetHealth.State' \
+    --output text)
+  
+  if [ "$TARGET_HEALTH" = "healthy" ]; then
+    echo "New instance is healthy in ALB!"
+    break
+  elif [ "$TARGET_HEALTH" = "unhealthy" ]; then
+    echo "New instance is unhealthy in ALB. Attempt $attempt of $max_attempts"
+    if [ $attempt -eq $max_attempts ]; then
+      echo "Max attempts reached. Please check the application manually."
+      exit 1
+    fi
+  else
+    echo "Target health is $TARGET_HEALTH. Waiting... Attempt $attempt of $max_attempts"
+  fi
+  sleep 30
+  ((attempt++))
+done
 
 echo "ASG update process completed successfully!"
